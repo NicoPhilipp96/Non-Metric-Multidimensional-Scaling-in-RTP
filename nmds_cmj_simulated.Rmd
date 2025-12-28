@@ -401,3 +401,103 @@ p_envfit <- p +
 print(p_envfit)
 
 ```
+
+\newpage
+
+___
+## Which Metrics Are Most Dissimilar From Baseline?
+- Across All Sessions
+- And At End of Rehab
+```{r}
+
+#######################################################################
+#which metrics have normalized more and which ones are lagging behind?
+#all sessions
+
+# -----------------------------
+# Shared: Baseline summary once
+# -----------------------------
+baseline_stats <- comp %>%
+  summarise(across(all_of(vars),
+                   list(mean = ~mean(.x, na.rm = TRUE),
+                        sd   = ~sd(.x, na.rm = TRUE)),
+                   .names = "{.col}_{.fn}"))
+
+# tiny epsilon to avoid division by zero SD
+eps_sd <- 1e-8
+
+# Helper to z-standardize a data.frame row-wise against baseline
+z_against_baseline <- function(df) {
+  df %>%
+    mutate(across(all_of(vars), ~ {
+      m  <- baseline_stats[[paste0(cur_column(), "_mean")]]
+      sd <- baseline_stats[[paste0(cur_column(), "_sd")]]
+      ( . - m ) / pmax(sd, eps_sd)
+    }, .names = "{.col}_z"))
+}
+
+# ----------------------------------------------------------
+# A) Which metrics deviated most across ALL RTP sessions?
+# ----------------------------------------------------------
+rtp_deviation <- rtp %>%
+  z_against_baseline() %>%
+  pivot_longer(ends_with("_z"), names_to = "metric", values_to = "z_diff") %>%
+  mutate(metric = sub("_z$", "", metric))
+
+metric_lag_tbl <- rtp_deviation %>%
+  group_by(metric) %>%
+  summarise(mean_abs_z = mean(abs(z_diff), na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mean_abs_z))
+
+ggplot(metric_lag_tbl, aes(reorder(metric, mean_abs_z), mean_abs_z)) +
+  geom_col(fill = "navy") +
+  #geom_hline(yintercept = 1, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    title = "Relative Normalization vs Baseline (All Rehab Sessions)",
+    subtitle = "Bars = mean |Z|; dashed line = 1 SD from baseline",
+    x = NULL, y = "Mean |Z| (SD units)"
+  ) +
+  theme_classic(base_size = 10)
+
+# ----------------------------------------------------------
+# B) Which metrics are STILL different at END of RTP?
+#     (average of last k sessions per athlete)
+# ----------------------------------------------------------
+k <- 3  # choose how many last sessions to average
+
+rtp_lastk <- rtp %>%
+  group_by(about) %>%
+  arrange(start_date, .by_group = TRUE) %>%
+  slice_tail(n = k) %>%
+  ungroup()
+
+rtp_lastk_mean <- rtp_lastk %>%
+  group_by(about) %>%
+  summarise(across(all_of(vars), ~mean(.x, na.rm = TRUE)), .groups = "drop")
+
+rtp_lastk_z <- rtp_lastk_mean %>%
+  z_against_baseline() %>%
+  pivot_longer(ends_with("_z"), names_to = "metric", values_to = "z_diff") %>%
+  mutate(metric = sub("_z$", "", metric),
+         abs_z  = abs(z_diff))
+
+lag_tbl <- rtp_lastk_z %>%
+  group_by(metric) %>%
+  summarise(abs_z = mean(abs_z, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(abs_z))
+
+ggplot(lag_tbl, aes(reorder(metric, abs_z), abs_z)) +
+  geom_col(fill = "firebrick") +
+  #geom_hline(yintercept = 1, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    title = sprintf("Metrics Most Different to Baseline (Last %d Rehab Sessions)", k),
+    subtitle = "Bars = |Z| vs baseline mean; dashed line = 1 SD",
+    x = NULL, y = "|Z| from Baseline (SD)"
+  ) +
+  theme_classic(base_size = 10)
+
+```
+
+Note How Metrics Related to Rapid Force Generation During the Braking Phase Are Most Dissimilar From the Healthy Baseline At Return to Sport. This Could Suggest a Hesitation to Quickly Load the Lower Body Joints When Decelerating Against Gravity. 
